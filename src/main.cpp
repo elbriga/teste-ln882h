@@ -2,16 +2,68 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Update.h>
-// #include <ESP.h>
+#include <libretiny.h>
 
 #define WIFI_SSID "GLS"
 #define WIFI_PASS "Lola09876543*"
 
+#define AP_SSID "eTomada-Recovery"
+#define AP_PASS "09876543"
+
+#define WIFI_TIMEOUT_MS 15000
+static bool modoAP = false;
+
 WebServer server(80);
 
 static bool otaOK = false;
+static String otaErro;
+
 static bool reiniciar = false;
 static uint32_t reiniciarEm = 0;
+
+static void wifiInit()
+{
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+    Serial.printf("Conectando em %s", WIFI_SSID);
+
+    uint32_t inicio = millis();
+
+    while (WiFi.status() != WL_CONNECTED &&
+           millis() - inicio < WIFI_TIMEOUT_MS)
+    {
+        Serial.print(".");
+        delay(500);
+    }
+
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        Serial.println();
+        Serial.print("WiFi conectado. IP: ");
+        Serial.println(WiFi.localIP());
+        return;
+    }
+
+    Serial.println();
+    Serial.println("Falha ao conectar no WiFi");
+    Serial.println("Iniciando AP de recovery...");
+
+    WiFi.disconnect();
+    WiFi.mode(WIFI_AP);
+
+    if (!WiFi.softAP(AP_SSID, AP_PASS))
+    {
+        Serial.println("ERRO iniciando AP");
+        return;
+    }
+
+    modoAP = true;
+
+    Serial.printf("AP: %s\n", AP_SSID);
+    Serial.print("IP: ");
+    Serial.println(WiFi.softAPIP());
+}
 
 static void otaUpload()
 {
@@ -22,24 +74,38 @@ static void otaUpload()
     case UPLOAD_FILE_START:
     {
         otaOK = false;
+        otaErro = "";
 
         size_t tamanho = server.arg("tamanho").toInt();
 
-        Serial.printf("OTA inicio: %s (%u bytes)\n",
-                      upload.filename.c_str(),
-                      tamanho);
+        Serial.printf(
+            "OTA inicio: %s (%u bytes)\n",
+            upload.filename.c_str(),
+            tamanho);
 
         if (!tamanho)
         {
-            Serial.println("Tamanho invalido");
+            otaErro = "Tamanho invalido";
+            Serial.println(otaErro);
             return;
         }
 
-        // Passamos U_FLASH para indicar que é uma atualização de firmware
+        // UF2 é formado por blocos de 512 bytes.
+        if (tamanho % 512)
+        {
+            otaErro = "Tamanho nao e multiplo de 512 (arquivo nao parece UF2)";
+            Serial.println(otaErro);
+            return;
+        }
+
         if (!Update.begin(tamanho, U_FLASH))
         {
-            Serial.printf("Update.begin erro: %s\n",
-                          Update.errorString());
+            otaErro = Update.errorString();
+
+            Serial.printf(
+                "Update.begin erro: %s\n",
+                otaErro.c_str());
+
             return;
         }
 
@@ -47,41 +113,68 @@ static void otaUpload()
     }
 
     case UPLOAD_FILE_WRITE:
+    {
         if (!Update.isRunning())
             return;
 
-        if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
+        size_t escrito = Update.write(
+            upload.buf,
+            upload.currentSize);
+
+        if (escrito != upload.currentSize)
         {
-            Serial.printf("Update.write erro: %s\n",
-                          Update.errorString());
+            otaErro = Update.errorString();
+
+            Serial.printf(
+                "Update.write erro: %s (%u/%u)\n",
+                otaErro.c_str(),
+                escrito,
+                upload.currentSize);
         }
 
         break;
+    }
 
     case UPLOAD_FILE_END:
+    {
         if (!Update.isRunning())
+        {
+            if (!otaErro.length())
+                otaErro = "Update nao esta em execucao";
+
             return;
+        }
 
         if (!Update.end())
         {
-            Serial.printf("Update.end erro: %s\n",
-                          Update.errorString());
+            otaErro = Update.errorString();
+
+            Serial.printf(
+                "Update.end erro: %s\n",
+                otaErro.c_str());
+
             return;
         }
 
-        Serial.printf("OTA concluido: %u bytes\n",
-                      upload.totalSize);
+        Serial.printf(
+            "OTA concluido: %u bytes\n",
+            upload.totalSize);
 
         otaOK = true;
         break;
+    }
 
     case UPLOAD_FILE_ABORTED:
-        Serial.println("OTA abortado");
+    {
+        otaErro = "Upload abortado";
+
+        Serial.println(otaErro);
 
         if (Update.isRunning())
             Update.abort();
 
         break;
+    }
     }
 }
 
@@ -89,14 +182,31 @@ static void httpInit()
 {
     server.on("/api/status", HTTP_GET, []()
               {
-        String json =
-            String("{\"mode\":\"recovery\",") +
-            "\"ip\":\"" + WiFi.localIP() + "\"," +
-            "\"rssi\":" + WiFi.RSSI() + "," +
-            "\"uptime\":" + millis() +
-            "}";
+    IPAddress ip = modoAP
+                       ? WiFi.softAPIP()
+                       : WiFi.localIP();
 
-        server.send(200, "application/json", json); });
+    char json[180];
+
+    snprintf(
+        json,
+        sizeof(json),
+        "{"
+        "\"mode\":\"recovery\","
+        "\"wifi_mode\":\"%s\","
+        "\"ip\":\"%u.%u.%u.%u\","
+        "\"rssi\":%ld,"
+        "\"uptime\":%lu"
+        "}",
+        modoAP ? "ap" : "sta",
+        ip[0], ip[1], ip[2], ip[3],
+        modoAP ? 0L : (long)WiFi.RSSI(),
+        (unsigned long)millis());
+
+    server.send(
+        200,
+        "application/json",
+        json); });
 
     server.on(
         "/api/ota",
@@ -106,11 +216,16 @@ static void httpInit()
         {
             if (!otaOK)
             {
+                String erro = otaErro;
+
+                if (!erro.length())
+                    erro = Update.errorString();
+
                 server.send(
                     500,
                     "application/json",
                     String("{\"msg\":\"OTA falhou\",\"erro\":\"") +
-                        Update.errorString() +
+                        erro +
                         "\"}");
 
                 return;
@@ -152,20 +267,7 @@ void setup()
     Serial.println();
     Serial.println("=== eTomada Recovery LN882H ===");
 
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-
-    Serial.printf("Conectando em %s", WIFI_SSID);
-
-    while (WiFi.status() != WL_CONNECTED)
-    {
-        Serial.print(".");
-        delay(500);
-    }
-
-    Serial.println();
-    Serial.printf("IP: ");
-    Serial.println(WiFi.localIP());
+    wifiInit();
 
     httpInit();
 }
@@ -177,7 +279,9 @@ void loop()
     if (reiniciar && (int32_t)(millis() - reiniciarEm) >= 0)
     {
         Serial.println("Reiniciando...");
+        Serial.flush();
         delay(50);
-        ESP.restart();
+
+        lt_reboot();
     }
 }
