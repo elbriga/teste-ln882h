@@ -35,7 +35,8 @@ static void otaUpload()
             return;
         }
 
-        if (!Update.begin(tamanho))
+        // Passamos U_FLASH para indicar que é uma atualização de firmware
+        if (!Update.begin(tamanho, U_FLASH))
         {
             Serial.printf("Update.begin erro: %s\n",
                           Update.errorString());
