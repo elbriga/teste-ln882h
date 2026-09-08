@@ -5,13 +5,13 @@
 #include <libretiny.h>
 #include <Flash.h>
 
-#define WIFI_SSID "GLS"
-#define WIFI_PASS "Lola09876543*"
+#define RECOVERY_WIFI_SSID "GLS"
+#define RECOVERY_WIFI_PASS "Lola09876543*"
 
-#define AP_SSID "eTomada-Recovery"
-#define AP_PASS "09876543"
+#define RECOVERY_AP_SSID_PREFIX "eTomada-Recovery-"
+#define RECOVERY_AP_PASS "09876543"
 
-#define WIFI_TIMEOUT_MS 15000
+#define RECOVERY_WIFI_TIMEOUT_MS 15000
 
 #define RECOVERY_FLASH_ADDR 0x1FF000
 #define RECOVERY_FLASH_SIZE 0x1000
@@ -22,12 +22,14 @@
 #define RECOVERY_REC_BOOT 0x424F4F54 // "BOOT"
 #define RECOVERY_REC_OK 0x4F4B4F4B   // "OKOK"
 
+static String apSSID;
+
 static bool bootAguardandoOK = false;
 static uint32_t bootInicio = 0;
 
 static bool modoAP = false;
 
-WebServer server(80);
+static WebServer server(80);
 
 static bool otaOK = false;
 static String otaErro;
@@ -35,14 +37,14 @@ static String otaErro;
 static void wifiInit()
 {
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    WiFi.begin(RECOVERY_WIFI_SSID, RECOVERY_WIFI_PASS);
 
-    Serial.printf("Conectando em %s", WIFI_SSID);
+    Serial.printf("Conectando em %s", RECOVERY_WIFI_SSID);
 
     uint32_t inicio = millis();
 
     while (WiFi.status() != WL_CONNECTED &&
-           millis() - inicio < WIFI_TIMEOUT_MS)
+           millis() - inicio < RECOVERY_WIFI_TIMEOUT_MS)
     {
         Serial.print(".");
         delay(500);
@@ -63,7 +65,12 @@ static void wifiInit()
     WiFi.disconnect();
     WiFi.mode(WIFI_AP);
 
-    if (!WiFi.softAP(AP_SSID, AP_PASS))
+    String mac = WiFi.macAddress();
+    mac.replace(":", "");
+
+    apSSID = String(RECOVERY_AP_SSID_PREFIX) + mac.substring(mac.length() - 4);
+
+    if (!WiFi.softAP(apSSID.c_str(), RECOVERY_AP_PASS))
     {
         Serial.println("ERRO iniciando AP");
         return;
@@ -71,7 +78,7 @@ static void wifiInit()
 
     modoAP = true;
 
-    Serial.printf("AP: %s\n", AP_SSID);
+    Serial.printf("AP: %s\n", apSSID.c_str());
     Serial.print("IP: ");
     Serial.println(WiFi.softAPIP());
 }
@@ -189,7 +196,7 @@ static void otaUpload(WebServer &server)
     }
 }
 
-void recoveryOTARegister(WebServer &server)
+void recoveryAPIRegister(WebServer &server)
 {
     server.on(
         "/api/ota",
@@ -218,12 +225,26 @@ void recoveryOTARegister(WebServer &server)
                 200,
                 "application/json",
                 "{\"msg\":\"OK\",\"reboot\":false}");
+
+            otaOK = false;
         },
 
         [&server]()
         {
             otaUpload(server);
         });
+
+    server.on("/api/reboot", HTTP_POST, [&server]()
+              {
+        server.send(
+            200,
+            "application/json",
+            "{\"msg\":\"reboot\"}");
+
+        delay(1000);
+        Serial.flush();
+
+        lt_reboot(); });
 }
 
 static void httpInit()
@@ -233,7 +254,9 @@ static void httpInit()
     IPAddress ip = modoAP
                        ? WiFi.softAPIP()
                        : WiFi.localIP();
-
+    String ssid = modoAP
+                       ? apSSID
+                       : WiFi.SSID();
     char json[180];
 
     snprintf(
@@ -241,12 +264,12 @@ static void httpInit()
         sizeof(json),
         "{"
         "\"mode\":\"recovery\","
-        "\"wifi_mode\":\"%s\","
+        "\"ssid\":\"%s\","
         "\"ip\":\"%u.%u.%u.%u\","
         "\"rssi\":%ld,"
         "\"uptime\":%lu"
         "}",
-        modoAP ? "ap" : "sta",
+        ssid.c_str(),
         ip[0], ip[1], ip[2], ip[3],
         modoAP ? 0L : (long)WiFi.RSSI(),
         (unsigned long)millis());
@@ -256,19 +279,7 @@ static void httpInit()
         "application/json",
         json); });
 
-    server.on("/api/reboot", HTTP_POST, []()
-              {
-            server.send(
-                200,
-                "application/json",
-                "{\"msg\":\"reboot\"}");
-                
-            delay(1000);
-            Serial.flush();
-            
-            lt_reboot(); });
-
-    recoveryOTARegister(server);
+    recoveryAPIRegister(server);
 
     server.begin();
 
@@ -356,7 +367,6 @@ static bool recoveryStorageAppend(uint32_t valor)
 bool recoveryBoot()
 {
     // Segurança: este layout é especificamente para flash de 2 MiB
-    /*
     if (Flash.getSize() != 0x200000)
     {
         Serial.printf(
@@ -365,7 +375,6 @@ bool recoveryBoot()
 
         return false;
     }
-    */
 
     uint32_t offset;
     uint8_t boots;

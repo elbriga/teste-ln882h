@@ -8,4 +8,4 @@ void recoveryBootTick();
 void recoveryInit();
 void recoveryLoop();
 
-void recoveryOTARegister(WebServer &server);
+void recoveryAPIRegister(WebServer &server);

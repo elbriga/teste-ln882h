@@ -5,8 +5,8 @@
 #include "app.h"
 #include "recovery.h"
 
-#define WIFI_SSID "GLS"
-#define WIFI_PASS "Lola09876543*"
+#define APP_WIFI_SSID "GLS"
+#define APP_WIFI_PASS "Lola09876543*"
 
 static WebServer server(80);
 
@@ -23,10 +23,12 @@ static void httpInit()
             sizeof(json),
             "{"
             "\"mode\":\"app\","
+            "\"ssid\":\"%s\","
             "\"ip\":\"%u.%u.%u.%u\","
             "\"rssi\":%ld,"
             "\"uptime\":%lu"
             "}",
+            WiFi.SSID().c_str(),
             ip[0], ip[1], ip[2], ip[3],
             (long)WiFi.RSSI(),
             (unsigned long)millis());
@@ -36,7 +38,7 @@ static void httpInit()
             "application/json",
             json); });
 
-    recoveryOTARegister(server);
+    recoveryAPIRegister(server);
 
     server.begin();
 
@@ -48,9 +50,9 @@ void appInit()
     Serial.println("Iniciando APP");
 
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    WiFi.begin(APP_WIFI_SSID, APP_WIFI_PASS);
 
-    Serial.printf("Conectando em %s", WIFI_SSID);
+    Serial.printf("Conectando em %s", APP_WIFI_SSID);
 
     while (WiFi.status() != WL_CONNECTED)
     {
