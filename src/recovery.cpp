@@ -5,6 +5,7 @@
 #include <libretiny.h>
 #include <Flash.h>
 
+// WIFI
 #define RECOVERY_WIFI_SSID "GLS"
 #define RECOVERY_WIFI_PASS "Lola09876543*"
 
@@ -13,6 +14,7 @@
 
 #define RECOVERY_WIFI_TIMEOUT_MS 15000
 
+// "EPROM"
 #define RECOVERY_FLASH_ADDR 0x1FF000
 #define RECOVERY_FLASH_SIZE 0x1000
 
@@ -21,6 +23,9 @@
 
 #define RECOVERY_REC_BOOT 0x424F4F54 // "BOOT"
 #define RECOVERY_REC_OK 0x4F4B4F4B   // "OKOK"
+
+// LED
+#define RECOVERY_LED_PIN PIN_PB04
 
 static String apSSID;
 
@@ -34,6 +39,23 @@ static WebServer server(80);
 static bool otaOK = false;
 static String otaErro;
 
+static int ledUltimoDecimo = -1;
+void recoveryLedLoop()
+{
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+
+    int decimo = tv.tv_usec / 100000;
+    if (decimo == ledUltimoDecimo)
+        return;
+    ledUltimoDecimo = decimo;
+
+    // Sincronizado com o segundo!
+    bool estado = decimo % 2;
+
+    digitalWrite(RECOVERY_LED_PIN, estado);
+}
+
 static void wifiInit()
 {
     WiFi.mode(WIFI_STA);
@@ -46,8 +68,10 @@ static void wifiInit()
     while (WiFi.status() != WL_CONNECTED &&
            millis() - inicio < RECOVERY_WIFI_TIMEOUT_MS)
     {
+        recoveryLedLoop();
+
         Serial.print(".");
-        delay(500);
+        delay(50);
     }
 
     if (WiFi.status() == WL_CONNECTED)
@@ -442,6 +466,8 @@ void recoveryInit()
     Serial.println();
     Serial.println("=== eTomada Recovery LN882H ===");
 
+    pinMode(RECOVERY_LED_PIN, OUTPUT);
+
     wifiInit();
 
     httpInit();
@@ -450,4 +476,6 @@ void recoveryInit()
 void recoveryLoop()
 {
     server.handleClient();
+
+    recoveryLedLoop();
 }

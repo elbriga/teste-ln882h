@@ -33,4 +33,6 @@ void loop()
     recoveryBootTick(); // Marca o boot como saudavel apos 10 segundos
 
     appLoop();
+
+    yield();
 }
