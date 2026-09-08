@@ -39,21 +39,20 @@ static WebServer server(80);
 static bool otaOK = false;
 static String otaErro;
 
-static int ledUltimoDecimo = -1;
+static bool ledUltimoEstado = false;
 void recoveryLedLoop()
 {
     struct timeval tv;
     gettimeofday(&tv, nullptr);
 
-    int decimo = tv.tv_usec / 100000;
-    if (decimo == ledUltimoDecimo)
-        return;
-    ledUltimoDecimo = decimo;
+    // Sincronizado com o segundo para piscarem juntos quando com NTP!
+    bool estado = (tv.tv_usec / 100000) % 2;
 
-    // Sincronizado com o segundo!
-    bool estado = decimo % 2;
-
-    digitalWrite(RECOVERY_LED_PIN, estado);
+    if (ledUltimoEstado != estado)
+    {
+        ledUltimoEstado = estado;
+        digitalWrite(RECOVERY_LED_PIN, estado);
+    }
 }
 
 static void wifiInit()

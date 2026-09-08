@@ -15,20 +15,19 @@ static WebServer server(80);
 
 static bool releEstado = false;
 
-static int ledUltimoDecimo = -1;
-static int ledUltimoEstado = -1;
+// IMPORTANTE:
+// manter como bool.
+// Como int inicializado com -1, o PB03/rele parava de responder
+// no LN882H/LibreTiny. Provavel bug de core/compiler/layout de memoria.
+static bool ledUltimoEstado = false;
 void ledLoop()
 {
     struct timeval tv;
     gettimeofday(&tv, nullptr);
 
-    int decimo = tv.tv_usec / 100000;
-    if (decimo == ledUltimoDecimo)
-        return;
-    ledUltimoDecimo = decimo;
-
-    // Sincronizado com o segundo!
-    bool estado = decimo < 2;
+    // Sincronizado com o segundo para piscarem juntos quando com NTP!
+    bool estado = tv.tv_usec < 200000;
+    // bool estado = millis() % 1000 < 200;
 
     if (estado != ledUltimoEstado)
     {
@@ -71,11 +70,15 @@ static void httpInit()
                 releEstado = !releEstado;
 
                 digitalWrite(APP_RELE_PIN, releEstado);
+
+                String out = "{\"msg\":\"OK\",\"estado\":";
+                out += releEstado ? "true" : "false";
+                out += "}";
             
                 server.send(
                     200,
                     "application/json",
-                    "{\"msg\":\"OK\"}"); });
+                    out.c_str()); });
 
     recoveryAPIRegister(server);
 
