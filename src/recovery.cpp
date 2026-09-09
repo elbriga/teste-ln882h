@@ -2,7 +2,6 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Update.h>
-#include <libretiny.h>
 #include <Flash.h>
 
 // WIFI
